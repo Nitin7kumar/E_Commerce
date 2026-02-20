@@ -11,6 +11,8 @@ const navItems = [
   { path: '/inventory', icon: <Icons.Inventory />, label: 'Inventory' },
   { path: '/categories', icon: <Icons.Categories />, label: 'Categories' },
   { path: '/sellers', icon: <Icons.Sellers />, label: 'Sellers' },
+  { path: '/coupons', icon: <Icons.Ticket />, label: 'Coupons' },
+  { path: '/reviews', icon: <Icons.Shield />, label: 'Reviews' },
 ];
 
 export default function Layout() {

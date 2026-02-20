@@ -17,14 +17,75 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { launchImageLibrary, launchCamera, Asset } from 'react-native-image-picker';
 import { colors } from '../../theme/colors';
 import { spacing, borderRadius } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
 import { ProfileStackParamList } from '../../types';
 import { useUserStore } from '../../store';
-import { supabase, isSupabaseConfigured } from '../../config/supabase';
+import { supabase, isSupabaseConfigured, getSupabase } from '../../config/supabase';
 
 type NavigationProp = NativeStackNavigationProp<ProfileStackParamList>;
+
+// Upload profile image to Supabase Storage
+const uploadProfileImage = async (
+    uri: string,
+    fileName: string,
+    type: string,
+    userId: string
+): Promise<string | null> => {
+    if (!isSupabaseConfigured()) return null;
+
+    try {
+        const response = await fetch(uri);
+        const blob = await response.blob();
+
+        const fileExt = fileName.split('.').pop() || 'jpg';
+        const filePath = `profile-images/${userId}_${Date.now()}.${fileExt}`;
+
+        // Try 'profile-images' bucket first, then 'product-images' as fallback
+        const { data, error } = await getSupabase()
+            .storage
+            .from('profile-images')
+            .upload(filePath, blob, {
+                contentType: type || 'image/jpeg',
+                upsert: true,
+            });
+
+        if (error) {
+            console.warn('profile-images bucket error, trying product-images:', error.message);
+            const { data: data2, error: error2 } = await getSupabase()
+                .storage
+                .from('product-images')
+                .upload(filePath, blob, {
+                    contentType: type || 'image/jpeg',
+                    upsert: true,
+                });
+
+            if (error2) {
+                console.error('Fallback upload error:', error2);
+                return null;
+            }
+
+            const { data: urlData } = getSupabase()
+                .storage
+                .from('product-images')
+                .getPublicUrl(filePath);
+
+            return urlData.publicUrl;
+        }
+
+        const { data: urlData } = getSupabase()
+            .storage
+            .from('profile-images')
+            .getPublicUrl(filePath);
+
+        return urlData.publicUrl;
+    } catch (err) {
+        console.error('Profile image upload failed:', err);
+        return null;
+    }
+};
 
 export const EditProfileScreen: React.FC = () => {
     const navigation = useNavigation<NavigationProp>();
@@ -35,6 +96,7 @@ export const EditProfileScreen: React.FC = () => {
     const [phone, setPhone] = useState(user?.phone || '');
     const [profileImageUrl, setProfileImageUrl] = useState(user?.profileImage || '');
     const [isLoading, setIsLoading] = useState(false);
+    const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
     const [errors, setErrors] = useState<{ name?: string; phone?: string }>({});
 
     useEffect(() => {
@@ -125,35 +187,120 @@ export const EditProfileScreen: React.FC = () => {
         }
     };
 
+    // Process a picked image asset — upload to storage and set URL
+    const processPickedAvatar = async (asset: Asset) => {
+        if (!asset.uri) return;
+
+        setIsUploadingAvatar(true);
+        try {
+            const userId = user?.id || 'anonymous';
+            const uploadedUrl = await uploadProfileImage(
+                asset.uri,
+                asset.fileName || `profile_${Date.now()}.jpg`,
+                asset.type || 'image/jpeg',
+                userId
+            );
+
+            if (uploadedUrl) {
+                setProfileImageUrl(uploadedUrl);
+            } else {
+                // Fallback: use local URI (works for preview, won't persist across devices)
+                setProfileImageUrl(asset.uri);
+            }
+        } catch (error) {
+            console.error('Avatar upload error:', error);
+            Alert.alert('Upload Error', 'Failed to upload photo. Please try again.');
+        } finally {
+            setIsUploadingAvatar(false);
+        }
+    };
+
+    // Open device camera
+    const openCamera = async () => {
+        try {
+            const result = await launchCamera({
+                mediaType: 'photo',
+                quality: 0.8,
+                maxWidth: 800,
+                maxHeight: 800,
+                saveToPhotos: false,
+            });
+
+            if (result.didCancel || !result.assets || result.assets.length === 0) return;
+            await processPickedAvatar(result.assets[0]);
+        } catch (error) {
+            console.error('Camera error:', error);
+            Alert.alert('Error', 'Failed to open camera. Please check camera permissions.');
+        }
+    };
+
+    // Open device photo library
+    const openGallery = async () => {
+        try {
+            const result = await launchImageLibrary({
+                mediaType: 'photo',
+                quality: 0.8,
+                maxWidth: 800,
+                maxHeight: 800,
+                selectionLimit: 1,
+            });
+
+            if (result.didCancel || !result.assets || result.assets.length === 0) return;
+            await processPickedAvatar(result.assets[0]);
+        } catch (error) {
+            console.error('Gallery error:', error);
+            Alert.alert('Error', 'Failed to open photo library. Please check permissions.');
+        }
+    };
+
+    // Enter URL manually (iOS only: Alert.prompt)
+    const openUrlPrompt = () => {
+        if (Platform.OS === 'ios') {
+            Alert.prompt?.(
+                'Profile Image URL',
+                'Paste the URL of your profile image',
+                [
+                    { text: 'Cancel', style: 'cancel' },
+                    {
+                        text: 'Save',
+                        onPress: (url?: string) => {
+                            if (url) setProfileImageUrl(url);
+                        },
+                    },
+                ],
+                'plain-text',
+                profileImageUrl
+            );
+        } else {
+            // On Android Alert.prompt is not available — the user can use
+            // the "Profile Image URL" text field at the bottom of the form.
+            Alert.alert(
+                'Enter URL',
+                'Use the "Profile Image URL" field below to paste a URL.'
+            );
+        }
+    };
+
     const handleAvatarPress = () => {
         Alert.alert(
-            'Change Avatar',
-            'Enter a URL for your profile picture',
+            'Change Profile Photo',
+            'Choose a source for your profile picture',
             [
-                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Take Photo',
+                    onPress: openCamera,
+                },
+                {
+                    text: 'Choose from Library',
+                    onPress: openGallery,
+                },
                 {
                     text: 'Enter URL',
-                    onPress: () => {
-                        // In a real app, you'd use an image picker
-                        // For now, we'll use the URL input field
-                        Alert.prompt?.(
-                            'Profile Image URL',
-                            'Paste the URL of your profile image',
-                            [
-                                { text: 'Cancel', style: 'cancel' },
-                                {
-                                    text: 'Save',
-                                    onPress: (url?: string) => {
-                                        if (url) setProfileImageUrl(url);
-                                    },
-                                },
-                            ],
-                            'plain-text',
-                            profileImageUrl
-                        );
-                    },
+                    onPress: openUrlPrompt,
                 },
-            ]
+                { text: 'Cancel', style: 'cancel' },
+            ],
+            { cancelable: true }
         );
     };
 
@@ -172,9 +319,9 @@ export const EditProfileScreen: React.FC = () => {
                 </TouchableOpacity>
                 <Text style={styles.headerTitle}>Edit Profile</Text>
                 <TouchableOpacity
-                    style={[styles.saveButton, isLoading && styles.saveButtonDisabled]}
+                    style={[styles.saveButton, (isLoading || isUploadingAvatar) && styles.saveButtonDisabled]}
                     onPress={handleSave}
-                    disabled={isLoading}
+                    disabled={isLoading || isUploadingAvatar}
                 >
                     {isLoading ? (
                         <ActivityIndicator size="small" color={colors.primary} />
@@ -198,6 +345,7 @@ export const EditProfileScreen: React.FC = () => {
                         <TouchableOpacity
                             style={styles.avatarContainer}
                             onPress={handleAvatarPress}
+                            disabled={isUploadingAvatar}
                         >
                             {profileImageUrl ? (
                                 <Image
@@ -211,11 +359,19 @@ export const EditProfileScreen: React.FC = () => {
                                     </Text>
                                 </View>
                             )}
+                            {/* Upload spinner overlay */}
+                            {isUploadingAvatar && (
+                                <View style={styles.avatarLoadingOverlay}>
+                                    <ActivityIndicator size="large" color={colors.white} />
+                                </View>
+                            )}
                             <View style={styles.avatarEditBadge}>
                                 <Icon name="camera-alt" size={16} color={colors.white} />
                             </View>
                         </TouchableOpacity>
-                        <Text style={styles.avatarHint}>Tap to change photo</Text>
+                        <Text style={styles.avatarHint}>
+                            {isUploadingAvatar ? 'Uploading...' : 'Tap to change photo'}
+                        </Text>
                     </View>
 
                     {/* Form Fields */}
@@ -435,6 +591,14 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         borderWidth: 2,
         borderColor: colors.white,
+    },
+
+    avatarLoadingOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        borderRadius: 50,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
 
     avatarHint: {

@@ -69,6 +69,28 @@ export const OrdersScreen: React.FC = () => {
   const [orders, setOrders] = useState<Order[]>(localOrders);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [productReviews, setProductReviews] = useState<Record<string, { rating: number; id: string }>>({});
+
+  // Fetch existing reviews for all order items
+  const fetchProductReviews = useCallback(async () => {
+    if (orders.length === 0) return;
+
+    const reviews: Record<string, { rating: number; id: string }> = {};
+    for (const order of orders) {
+      for (const item of order.items) {
+        if (!reviews[item.product.id]) {
+          const result = await reviewService.getUserReview(item.product.id);
+          if (result.review) {
+            reviews[item.product.id] = {
+              rating: result.review.rating,
+              id: result.review.id,
+            };
+          }
+        }
+      }
+    }
+    setProductReviews(reviews);
+  }, [orders]);
 
   const fetchOrders = useCallback(async (showRefreshIndicator = false) => {
     console.log('📋 OrdersScreen: fetchOrders called');
@@ -114,6 +136,15 @@ export const OrdersScreen: React.FC = () => {
     useCallback(() => {
       fetchOrders();
     }, [fetchOrders])
+  );
+
+  // Fetch reviews when screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      if (orders.length > 0) {
+        fetchProductReviews();
+      }
+    }, [fetchProductReviews, orders])
   );
 
   // Update orders when local orders change
@@ -196,6 +227,8 @@ export const OrdersScreen: React.FC = () => {
   const renderOrderItem = ({ item }: { item: Order }) => {
     const firstItem = item.items[0];
     const itemCount = item.items.reduce((sum, i) => sum + i.quantity, 0);
+    const existingReview = productReviews[firstItem.product.id];
+    const hasReview = !!existingReview;
 
     return (
       <TouchableOpacity
@@ -239,6 +272,68 @@ export const OrdersScreen: React.FC = () => {
             </Text>
           </View>
           <Icon name="chevron-right" size={24} color={colors.textTertiary} />
+        </View>
+
+        {/* Review Footer - Always visible on every order card */}
+        <View style={{
+          marginTop: 12,
+          paddingTop: 12,
+          borderTopWidth: 1,
+          borderTopColor: '#EEEEEE',
+          flexDirection: 'row',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          backgroundColor: '#FAFAFA',
+          paddingHorizontal: 12,
+          paddingVertical: 10,
+          borderRadius: 8,
+        }}>
+          {/* Star Rating Display - Left Side */}
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {[1, 2, 3, 4, 5].map((star, index) => (
+              <Icon
+                key={star}
+                name={hasReview && star <= existingReview.rating ? 'star' : 'star-border'}
+                size={24}
+                color="#FFD700"
+                style={{ marginRight: index < 4 ? 3 : 0 }}
+              />
+            ))}
+          </View>
+
+          {/* Write Review Button - Right Side */}
+          <TouchableOpacity
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: '#FCE4EC',
+              paddingHorizontal: 14,
+              paddingVertical: 8,
+              borderRadius: 6,
+            }}
+            onPress={(e) => {
+              e.stopPropagation();
+              navigation.navigate('WriteReview', {
+                productId: firstItem.product.id,
+                orderId: item.id,
+                productName: firstItem.product.name,
+                imageUrl: firstItem.product.images[0],
+                existingReview: hasReview ? {
+                  id: existingReview.id,
+                  rating: existingReview.rating,
+                  title: '',
+                  comment: '',
+                  images: [],
+                } : undefined,
+              });
+            }}
+            activeOpacity={0.7}
+          >
+            <Icon name="rate-review" size={16} color="#E91E63" style={{ marginRight: 6 }} />
+            <Text style={{ color: '#E91E63', fontWeight: '600', fontSize: 13 }}>
+              {hasReview ? 'Edit Review' : 'Write Review'}
+            </Text>
+          </TouchableOpacity>
         </View>
       </TouchableOpacity>
     );
@@ -288,6 +383,7 @@ export const OrderDetailsScreen: React.FC = () => {
   const [showReturnModal, setShowReturnModal] = useState(false);
   const [selectedItemForReturn, setSelectedItemForReturn] = useState<string | null>(null);
   const [productReviews, setProductReviews] = useState<Record<string, DBReview>>({});
+  const [returnTypeForModal, setReturnTypeForModal] = useState<'refund' | 'replacement' | 'exchange'>('refund');
 
   // Fetch existing reviews for order items
   const fetchProductReviews = useCallback(async () => {
@@ -310,33 +406,40 @@ export const OrderDetailsScreen: React.FC = () => {
     }, [fetchProductReviews])
   );
 
-  // Fetch order from database if not in local store
+  // Keep track of order for focus effect without triggering re-runs
+  const orderRef = React.useRef(order);
   useEffect(() => {
-    const fetchOrder = async () => {
-      if (order) return; // Already have order
+    orderRef.current = order;
+  }, [order]);
 
-      if (isSupabaseConfigured()) {
-        setIsLoading(true);
-        try {
-          const result = await orderService.getOrderById(orderId);
-          if (result.order) {
-            setOrder(result.order);
-          } else {
-            setError(result.error || 'Order not found');
-          }
-        } catch (err) {
-          setError('Failed to load order');
-        } finally {
-          setIsLoading(false);
+  const fetchOrder = useCallback(async () => {
+    if (isSupabaseConfigured()) {
+      try {
+        const result = await orderService.getOrderById(orderId);
+        if (result.order) {
+          setOrder(result.order);
+        } else {
+          // Only show error if we don't have an order yet
+          if (!orderRef.current) setError(result.error || 'Order not found');
         }
-      } else {
-        setError('Order not found');
-        setIsLoading(false);
+      } catch (err) {
+        if (!orderRef.current) setError('Failed to load order');
       }
-    };
+    } else {
+      if (!orderRef.current) setError('Order not found');
+    }
+  }, [orderId]);
 
-    fetchOrder();
-  }, [orderId, order]);
+  useFocusEffect(
+    useCallback(() => {
+      const load = async () => {
+        if (!orderRef.current) setIsLoading(true);
+        await fetchOrder();
+        setIsLoading(false);
+      };
+      load();
+    }, [fetchOrder])
+  );
 
   if (isLoading) {
     return (
@@ -399,15 +502,9 @@ export const OrderDetailsScreen: React.FC = () => {
         keyExtractor={(item, index) => `${item.product.id}-${index}`}
         ListHeaderComponent={() => (
           <>
-            {/* Order Status */}
+            {/* Order Tracking Timeline */}
             <View style={styles.statusSection}>
-              <View style={styles.statusHeader}>
-                <Text style={styles.statusLabel}>Order Status</Text>
-                <Badge
-                  text={getStatusLabel(order.status)}
-                  variant={order.status === 'delivered' ? 'success' : 'info'}
-                />
-              </View>
+              <Text style={styles.statusLabel}>Order Status</Text>
               <Text style={styles.statusDate}>
                 Placed on {new Date(order.createdAt).toLocaleDateString('en-IN', {
                   day: 'numeric',
@@ -415,6 +512,55 @@ export const OrderDetailsScreen: React.FC = () => {
                   year: 'numeric',
                 })}
               </Text>
+
+              <View style={styles.trackerContainer}>
+                {['confirmed', 'shipped', 'out_for_delivery', 'delivered'].map((step, index, array) => {
+                  const statusOrder = ['confirmed', 'shipped', 'out_for_delivery', 'delivered'];
+                  const currentStatusIndex = statusOrder.indexOf(order.status);
+                  const stepIndex = statusOrder.indexOf(step);
+                  const isActive = currentStatusIndex >= stepIndex;
+                  const isLast = index === array.length - 1;
+
+                  // Map step keys to display labels
+                  const labels: Record<string, string> = {
+                    confirmed: 'Confirmed',
+                    shipped: 'Shipped',
+                    out_for_delivery: 'Out for\nDelivery',
+                    delivered: 'Delivered'
+                  };
+
+                  return (
+                    <View key={step} style={styles.trackerStep}>
+                      {/* Line connector */}
+                      {!isLast && (
+                        <View style={[
+                          styles.trackerLine,
+                          { backgroundColor: currentStatusIndex > stepIndex ? colors.success : colors.borderLight }
+                        ]} />
+                      )}
+
+                      {/* Circle Indicator */}
+                      <View style={[
+                        styles.trackerCircle,
+                        {
+                          backgroundColor: isActive ? colors.success : colors.borderLight,
+                          borderColor: isActive ? colors.success : colors.borderLight
+                        }
+                      ]}>
+                        {isActive && <Icon name="check" size={12} color={colors.white} />}
+                      </View>
+
+                      {/* Label */}
+                      <Text style={[
+                        styles.trackerLabel,
+                        { color: isActive ? colors.textPrimary : colors.textTertiary }
+                      ]}>
+                        {labels[step]}
+                      </Text>
+                    </View>
+                  );
+                })}
+              </View>
             </View>
 
             {/* Delivery Address */}
@@ -438,83 +584,118 @@ export const OrderDetailsScreen: React.FC = () => {
           const hasReview = !!existingReview;
 
           return (
-            <View style={styles.orderItemCard}>
-              <Image
-                source={{ uri: item.product.images[0] }}
-                style={styles.itemImage}
-              />
-              <View style={styles.itemInfo}>
-                <Text style={styles.itemBrand}>{item.product.brand}</Text>
-                <Text style={styles.itemName} numberOfLines={2}>
-                  {item.product.name}
-                </Text>
-                <Text style={styles.itemVariant}>
-                  Size: {item.selectedSize} | Color: {item.selectedColor}
-                </Text>
-                <Text style={styles.itemPrice}>
-                  ₹{item.product.price.toLocaleString('en-IN')} x {item.quantity}
-                </Text>
+            <View style={[styles.orderItemCard, { flexDirection: 'column' }]}>
+              {/* Product Row: Image + Info */}
+              <View style={{ flexDirection: 'row' }}>
+                <Image
+                  source={{ uri: item.product.images[0] }}
+                  style={styles.itemImage}
+                />
+                <View style={styles.itemInfo}>
+                  <Text style={styles.itemBrand}>{item.product.brand}</Text>
+                  <Text style={styles.itemName} numberOfLines={2}>
+                    {item.product.name}
+                  </Text>
+                  <Text style={styles.itemVariant}>
+                    Size: {item.selectedSize} | Color: {item.selectedColor}
+                  </Text>
+                  <Text style={styles.itemPrice}>
+                    ₹{item.product.price.toLocaleString('en-IN')} x {item.quantity}
+                  </Text>
+                </View>
+              </View>
 
-                {/* Rating & Review Section - Only show for delivered orders */}
-                {order.status === 'delivered' && (
-                  <View style={styles.reviewSection}>
-                    {/* Star Rating Display */}
-                    <View style={styles.starsRow}>
-                      {[1, 2, 3, 4, 5].map((star) => (
-                        <Icon
-                          key={star}
-                          name={hasReview && star <= existingReview.rating ? 'star' : 'star-border'}
-                          size={18}
-                          color={hasReview && star <= existingReview.rating ? colors.star : colors.starEmpty}
-                        />
-                      ))}
-                    </View>
-
-                    {/* Write/Edit Review Button */}
-                    <TouchableOpacity
-                      style={styles.writeReviewButton}
-                      onPress={() => {
-                        navigation.navigate('WriteReview', {
-                          productId: item.product.id,
-                          orderId: orderId,
-                          productName: item.product.name,
-                          imageUrl: item.product.images[0],
-                          existingReview: hasReview ? {
-                            id: existingReview.id,
-                            rating: existingReview.rating,
-                            title: existingReview.title,
-                            comment: existingReview.comment,
-                            images: existingReview.images,
-                          } : undefined,
-                        });
-                      }}
-                    >
+              {/* Rating & Review Section - Full width below product row */}
+              {['confirmed', 'shipped', 'out_for_delivery', 'delivered'].includes(order.status) && (
+                <View style={{
+                  marginTop: 12,
+                  paddingTop: 12,
+                  borderTopWidth: 1,
+                  borderTopColor: '#EEEEEE',
+                  flexDirection: 'row',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  backgroundColor: '#FAFAFA',
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                }}>
+                  {/* Star Rating Display */}
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    {[1, 2, 3, 4, 5].map((star, index) => (
                       <Icon
-                        name={hasReview ? 'edit' : 'rate-review'}
-                        size={14}
-                        color={colors.primary}
+                        key={star}
+                        name={hasReview && star <= existingReview.rating ? 'star' : 'star-border'}
+                        size={24}
+                        color="#FFD700"
+                        style={{ marginRight: index < 4 ? 3 : 0 }}
                       />
-                      <Text style={styles.writeReviewText}>
-                        {hasReview ? 'Edit Review' : 'Write a Review'}
-                      </Text>
-                    </TouchableOpacity>
+                    ))}
                   </View>
-                )}
 
-                {/* Return/Replace Button */}
-                {order.status === 'delivered' && (
+                  {/* Write/Edit Review Button */}
                   <TouchableOpacity
-                    style={styles.returnItemButton}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      backgroundColor: '#FCE4EC',
+                      paddingHorizontal: 14,
+                      paddingVertical: 8,
+                      borderRadius: 6,
+                    }}
+                    onPress={() => {
+                      navigation.navigate('WriteReview', {
+                        productId: item.product.id,
+                        orderId: orderId,
+                        productName: item.product.name,
+                        imageUrl: item.product.images[0],
+                        existingReview: hasReview ? {
+                          id: existingReview.id,
+                          rating: existingReview.rating,
+                          title: existingReview.title,
+                          comment: existingReview.comment,
+                          images: existingReview.images,
+                        } : undefined,
+                      });
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Icon name="rate-review" size={16} color="#E91E63" style={{ marginRight: 6 }} />
+                    <Text style={{ color: '#E91E63', fontWeight: '600', fontSize: 13 }}>
+                      {hasReview ? 'Edit Review' : 'Write Review'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Return & Exchange Buttons - Only for delivered orders */}
+              {order.status === 'delivered' && (
+                <View style={styles.returnActionContainer}>
+                  <TouchableOpacity
+                    style={styles.actionButton}
                     onPress={() => {
                       setSelectedItemForReturn(item.product.name);
+                      setReturnTypeForModal('refund');
                       setShowReturnModal(true);
                     }}
                   >
-                    <Icon name="assignment-return" size={16} color={colors.primary} />
-                    <Text style={styles.returnItemText}>Return / Replace</Text>
+                    <Icon name="keyboard-return" size={18} color={colors.textPrimary} />
+                    <Text style={styles.actionButtonText}>RETURN</Text>
                   </TouchableOpacity>
-                )}
-              </View>
+
+                  <TouchableOpacity
+                    style={styles.actionButton}
+                    onPress={() => {
+                      setSelectedItemForReturn(item.product.name);
+                      setReturnTypeForModal('exchange');
+                      setShowReturnModal(true);
+                    }}
+                  >
+                    <Icon name="cached" size={18} color={colors.textPrimary} />
+                    <Text style={styles.actionButtonText}>EXCHANGE</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
             </View>
           );
         }}
@@ -558,12 +739,14 @@ export const OrderDetailsScreen: React.FC = () => {
         visible={showReturnModal}
         orderId={orderId}
         productName={selectedItemForReturn || undefined}
+        initialReturnType={returnTypeForModal}
         onClose={() => {
           setShowReturnModal(false);
           setSelectedItemForReturn(null);
         }}
         onSubmit={() => {
-          // Show success message and refresh
+          // Refresh order details after successful return request
+          fetchOrder();
         }}
       />
     </View>
@@ -1011,5 +1194,95 @@ const styles = StyleSheet.create({
     ...typography.caption,
     color: colors.primary,
     fontWeight: '600',
+  },
+
+  // Review Footer styles for Order History card
+  reviewFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingTop: 12,
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#EEEEEE',
+  },
+
+  reviewFooterStars: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 2,
+  },
+
+  reviewFooterButtonText: {
+    color: '#E91E63',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+
+  // Tracker Styles
+  trackerContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: spacing.xl,
+    paddingHorizontal: spacing.xs,
+  },
+  trackerStep: {
+    alignItems: 'center',
+    width: 70,
+    position: 'relative',
+  },
+  trackerLine: {
+    position: 'absolute',
+    top: 9, // Half of circle height (18/2)
+    left: '50%',
+    width: '100%',
+    height: 2,
+    zIndex: -1,
+  },
+  trackerCircle: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    borderWidth: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.white,
+    zIndex: 1,
+    marginBottom: spacing.xs,
+  },
+  trackerLabel: {
+    ...typography.caption,
+    fontSize: 10,
+    textAlign: 'center',
+    marginTop: 4,
+  },
+
+  // Return Action Buttons
+  returnActionContainer: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+
+  actionButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.white,
+    gap: spacing.xs,
+  },
+
+  actionButtonText: {
+    ...typography.button,
+    color: colors.textPrimary,
+    fontSize: 12,
+    fontWeight: '600',
+    letterSpacing: 0.5,
   },
 });

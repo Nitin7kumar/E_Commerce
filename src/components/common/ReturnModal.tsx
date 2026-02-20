@@ -29,6 +29,7 @@ interface ReturnModalProps {
     orderId: string;
     orderItemId?: string;
     productName?: string;
+    initialReturnType?: 'refund' | 'replacement' | 'exchange';
     onClose: () => void;
     onSubmit?: () => void;
 }
@@ -55,11 +56,19 @@ export const ReturnModal: React.FC<ReturnModalProps> = ({
     orderId,
     orderItemId,
     productName,
+    initialReturnType,
     onClose,
     onSubmit,
 }) => {
     const [selectedReason, setSelectedReason] = useState<string | null>(null);
-    const [returnType, setReturnType] = useState('refund');
+    const [returnType, setReturnType] = useState(initialReturnType || 'refund');
+
+    // Update return type when modal opens or initialReturnType changes
+    React.useEffect(() => {
+        if (visible) {
+            setReturnType(initialReturnType || 'refund');
+        }
+    }, [visible, initialReturnType]);
     const [description, setDescription] = useState('');
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);

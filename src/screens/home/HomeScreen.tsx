@@ -84,6 +84,14 @@ export const HomeScreen: React.FC = () => {
     navigation.getParent()?.navigate('BagTab');
   };
 
+  const handleSeeAllCategories = () => {
+    navigation.getParent()?.navigate('CategoriesTab');
+  };
+
+  const handleViewAllProducts = (title: string) => {
+    navigation.navigate('ProductList', { title });
+  };
+
   const getShortAddress = () => {
     if (!defaultAddress) return 'Add Address';
     const words = defaultAddress.locality.split(' ').slice(0, 2).join(' ');
@@ -281,17 +289,10 @@ export const HomeScreen: React.FC = () => {
             <Text style={styles.searchPlaceholder}>Search for products, brands...</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={styles.headerIconButton} onPress={handleBagPress}>
-            <Icon name="shopping-bag" size={24} color={colors.textPrimary} />
-            {bagCount > 0 && (
-              <View style={styles.cartBadge}>
-                <Text style={styles.cartBadgeText}>{bagCount > 9 ? '9+' : bagCount}</Text>
-              </View>
-            )}
-          </TouchableOpacity>
-
           <TouchableOpacity style={styles.headerIconButton} onPress={handleProfilePress}>
-            <Icon name="person-outline" size={24} color={colors.textPrimary} />
+            <View style={styles.profileIconCircle}>
+              <Icon name="person" size={24} color={colors.textPrimary} />
+            </View>
           </TouchableOpacity>
         </View>
       </View>
@@ -322,7 +323,7 @@ export const HomeScreen: React.FC = () => {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Categories</Text>
-            <TouchableOpacity>
+            <TouchableOpacity onPress={handleSeeAllCategories}>
               <Text style={styles.seeAllLink}>See All</Text>
             </TouchableOpacity>
           </View>
@@ -350,7 +351,7 @@ export const HomeScreen: React.FC = () => {
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>Featured Products</Text>
-            <TouchableOpacity>
+            <TouchableOpacity onPress={() => handleViewAllProducts('Featured Products')}>
               <Text style={styles.seeAllLink}>View All</Text>
             </TouchableOpacity>
           </View>
@@ -363,7 +364,7 @@ export const HomeScreen: React.FC = () => {
           <View style={styles.section}>
             <View style={styles.sectionHeader}>
               <Text style={styles.sectionTitle}>🔥 Trending Now</Text>
-              <TouchableOpacity>
+              <TouchableOpacity onPress={() => handleViewAllProducts('Trending Now')}>
                 <Text style={styles.seeAllLink}>View All</Text>
               </TouchableOpacity>
             </View>
@@ -519,6 +520,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
     paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderRadius: borderRadius.full,
@@ -549,6 +552,17 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
 
+  profileIconCircle: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: colors.white,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
   cartBadge: {
     position: 'absolute',
     top: 4,
@@ -560,10 +574,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     borderWidth: 2,
-    borderColor: colors.white,
+    borderColor: colors.white,  // This remains unchanged in this context, just preserving structure
   },
 
-  cartBadgeText: {
+  cartBadgeText: {  // This block was not in the previous replace call target, but I need to match the structure carefully.
     fontSize: 10,
     fontWeight: '700',
     color: colors.white,
@@ -582,6 +596,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
     paddingHorizontal: spacing.sm,
     paddingVertical: 8,
     borderRadius: borderRadius.sm,

@@ -232,6 +232,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
     borderRadius: 8,
     paddingHorizontal: spacing.md,
     height: 44,

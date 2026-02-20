@@ -18,9 +18,8 @@ interface RecentOrder {
   id: string;
   order_number: string;
   total_amount: number;
-  order_status: string;
+  status: string;
   created_at: string;
-  user?: { full_name: string };
 }
 
 const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6'];
@@ -63,9 +62,9 @@ export default function Dashboard() {
       ] = await Promise.all([
         supabase.from('products').select('id', { count: 'exact', head: true }),
         supabase.from('orders').select('id', { count: 'exact', head: true }),
-        supabase.from('users').select('id', { count: 'exact', head: true }),
-        supabase.from('orders').select('id', { count: 'exact', head: true }).eq('order_status', 'pending'),
-        supabase.from('inventory').select('id', { count: 'exact', head: true }).lt('quantity_available', 10),
+        supabase.from('profiles').select('id', { count: 'exact', head: true }),
+        supabase.from('orders').select('id', { count: 'exact', head: true }).eq('status', 'pending'),
+        supabase.from('products').select('id', { count: 'exact', head: true }).lt('stock', 10),
         supabase.from('sellers').select('id', { count: 'exact', head: true }),
         supabase.from('categories').select('id', { count: 'exact', head: true }).eq('is_active', true),
         supabase.from('orders').select('total_amount'),
@@ -103,10 +102,10 @@ export default function Dashboard() {
       // Order status distribution
       const { data: ordersByStatus } = await supabase
         .from('orders')
-        .select('order_status');
+        .select('status');
 
       const statusCounts = ordersByStatus?.reduce((acc: Record<string, number>, order) => {
-        acc[order.order_status] = (acc[order.order_status] || 0) + 1;
+        acc[order.status] = (acc[order.status] || 0) + 1;
         return acc;
       }, {}) || {};
 
@@ -322,8 +321,8 @@ export default function Dashboard() {
                   <td>{formatDate(order.created_at)}</td>
                   <td>{formatCurrency(order.total_amount)}</td>
                   <td>
-                    <span className={`badge ${getStatusBadge(order.order_status)}`}>
-                      {order.order_status}
+                    <span className={`badge ${getStatusBadge(order.status)}`}>
+                      {order.status}
                     </span>
                   </td>
                 </tr>

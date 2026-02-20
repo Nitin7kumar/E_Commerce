@@ -3,6 +3,9 @@ import { useState, useEffect } from 'react';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
 import Products from './pages/Products';
+import Orders from './pages/Orders';
+import Returns from './pages/Returns';
+import Reviews from './pages/Reviews';
 import { getCurrentSeller, SellerUser, signOut } from './lib/supabase';
 import { Icons } from './components/Icons';
 
@@ -72,6 +75,42 @@ function App() {
                         )
                     }
                 />
+                <Route
+                    path="/orders"
+                    element={
+                        seller ? (
+                            <Layout seller={seller} onLogout={handleLogout}>
+                                <Orders seller={seller} />
+                            </Layout>
+                        ) : (
+                            <Navigate to="/login" replace />
+                        )
+                    }
+                />
+                <Route
+                    path="/returns"
+                    element={
+                        seller ? (
+                            <Layout seller={seller} onLogout={handleLogout}>
+                                <Returns seller={seller} />
+                            </Layout>
+                        ) : (
+                            <Navigate to="/login" replace />
+                        )
+                    }
+                />
+                <Route
+                    path="/reviews"
+                    element={
+                        seller ? (
+                            <Layout seller={seller} onLogout={handleLogout}>
+                                <Reviews seller={seller} />
+                            </Layout>
+                        ) : (
+                            <Navigate to="/login" replace />
+                        )
+                    }
+                />
             </Routes>
         </BrowserRouter>
     );
@@ -101,8 +140,14 @@ function Layout({
                     <a href="/products" className="nav-item">
                         <Icons.Products /> My Products
                     </a>
-                    <a href="#" className="nav-item disabled">
-                        <Icons.Orders /> Orders (Coming Soon)
+                    <a href="/orders" className="nav-item">
+                        <Icons.Orders /> Orders
+                    </a>
+                    <a href="/returns" className="nav-item">
+                        <Icons.ReturnIcon /> Returns
+                    </a>
+                    <a href="/reviews" className="nav-item">
+                        <Icons.StarIcon /> Reviews
                     </a>
                     <a href="#" className="nav-item disabled">
                         <Icons.Settings /> Settings (Coming Soon)

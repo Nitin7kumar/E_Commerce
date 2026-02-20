@@ -50,7 +50,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
       activeOpacity={0.7}
     >
       <Icon name="search" size={20} color={colors.textTertiary} />
-      
+
       <TextInput
         style={styles.input}
         value={value}
@@ -65,7 +65,7 @@ export const SearchBar: React.FC<SearchBarProps> = ({
         autoCapitalize="none"
         autoCorrect={false}
       />
-      
+
       {value.length > 0 && (
         <TouchableOpacity onPress={handleClear} hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
           <Icon name="close" size={18} color={colors.textTertiary} />
@@ -80,6 +80,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.backgroundSecondary,
+    borderWidth: 1,
+    borderColor: colors.border,
     borderRadius: borderRadius.sm,
     paddingHorizontal: spacing.md,
     height: 40,

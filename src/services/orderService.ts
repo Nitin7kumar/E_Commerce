@@ -1,5 +1,6 @@
 import { getSupabase, isSupabaseConfigured } from '../config/supabase';
 import { Order, CartItem, Address, OrderStatus } from '../types';
+import { productService } from './productService';
 
 export interface CreateOrderData {
   items: CartItem[];
@@ -266,6 +267,13 @@ export const orderService = {
 
       console.log('📦 OrderService: Order created successfully! ID:', order.id);
 
+      // Decrement stock for each item
+      for (const item of data.items) {
+        if (item.product.id) {
+          await productService.updateStock(item.product.id, -item.quantity);
+        }
+      }
+
       return {
         success: true,
         orderId: order.id,
@@ -399,6 +407,20 @@ export const orderService = {
 
       if (error) {
         return { success: false, error: error.message };
+      }
+
+      // Increment stock for cancelled items
+      const { data: items } = await getSupabase()
+        .from('order_items')
+        .select('product_id, quantity')
+        .eq('order_id', orderId);
+
+      if (items) {
+        for (const item of items) {
+          if (item.product_id) {
+            await productService.updateStock(item.product_id, item.quantity);
+          }
+        }
       }
 
       return { success: true };

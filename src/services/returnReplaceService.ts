@@ -6,6 +6,7 @@ import {
     Insertable,
     Updateable,
 } from '../types/database';
+import { productService } from './productService';
 
 export type RequestType = 'return' | 'replace';
 export type RequestStatus =
@@ -528,7 +529,7 @@ export async function completeRequest(
         // Update order item status
         const { data: request } = await getSupabase()
             .from('return_replace_requests')
-            .select('order_item_id, request_type')
+            .select('order_item_id, request_type, quantity')
             .eq('id', requestId)
             .single();
 
@@ -539,6 +540,19 @@ export async function completeRequest(
                     item_status: request.request_type === 'return' ? 'returned' : 'replaced',
                 })
                 .eq('id', request.order_item_id);
+
+            // Increment stock if return
+            if (request.request_type === 'return') {
+                const { data: orderItem } = await getSupabase()
+                    .from('order_items')
+                    .select('product_id')
+                    .eq('id', request.order_item_id)
+                    .single();
+
+                if (orderItem && orderItem.product_id) {
+                    await productService.updateStock(orderItem.product_id, request.quantity || 1);
+                }
+            }
         }
 
         return { success: true, error: null };

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -9,19 +9,23 @@ import {
   StatusBar,
   ActivityIndicator,
   Image,
+  Animated,
+  Modal,
+  TouchableWithoutFeedback,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/MaterialIcons';
-import { Button, Price, Rating, Badge, CircularImageCarousel, ReviewModal } from '../../components';
+import { Price, Rating, Badge, CircularImageCarousel, ReviewModal } from '../../components';
 import { colors } from '../../theme/colors';
 import { spacing, borderRadius } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
 import { RootStackParamList } from '../../types';
 import { useProduct } from '../../services/productService';
 import { useBagStore, useWishlistStore } from '../../store';
-import { useProductReviews, ReviewWithUser } from '../../services/reviewService';
+import { useProductReviews, ReviewWithUser, useCanReview } from '../../services/reviewService';
 
 const { width } = Dimensions.get('window');
 
@@ -36,16 +40,26 @@ export const ProductDetailsScreen: React.FC = () => {
   // Fetch product from Supabase
   const { product, loading, error } = useProduct(productId);
 
-  const { addItem } = useBagStore();
+  const { addItem, items: bagItems } = useBagStore();
   const { isInWishlist, toggleItem } = useWishlistStore();
 
-  const [selectedSize, setSelectedSize] = useState<string>('');
+  const [selectedSize, setSelectedSize] = useState<string | null>(null);
   const [selectedColor, setSelectedColor] = useState<string>('');
+  const [quantity, setQuantity] = useState<number>(1);
   const [sizeError, setSizeError] = useState(false);
+  const [addedToBag, setAddedToBag] = useState(false);
+
+  // Bottom Sheet state
+  const [isModalVisible, setIsModalVisible] = useState(false);
+  const [pendingAction, setPendingAction] = useState<'buy' | 'bag'>('bag');
+  const slideAnim = useRef(new Animated.Value(0)).current;
+
+  const scrollViewRef = useRef<ScrollView>(null);
   const [showReviewModal, setShowReviewModal] = useState(false);
 
   // Fetch reviews for the product
   const { reviews, stats: reviewStats, refetch: refetchReviews, loading: reviewsLoading } = useProductReviews(productId);
+  const { canReview } = useCanReview(productId);
 
   const wishlisted = product ? isInWishlist(product.id) : false;
 
@@ -75,22 +89,63 @@ export const ProductDetailsScreen: React.FC = () => {
     );
   }
 
-  const handleAddToBag = () => {
-    // Only require size selection if product has sizes
+  // ===== BOTTOM SHEET ANIMATION HELPERS =====
+  const openBottomSheet = (action: 'buy' | 'bag') => {
+    setPendingAction(action);
+    setIsModalVisible(true);
+    // Reset selection state for fresh open
+    setSizeError(false);
+    Animated.spring(slideAnim, {
+      toValue: 1,
+      useNativeDriver: true,
+      damping: 20,
+      stiffness: 150,
+    }).start();
+  };
+
+  const closeBottomSheet = () => {
+    Animated.timing(slideAnim, {
+      toValue: 0,
+      duration: 250,
+      useNativeDriver: true,
+    }).start(() => {
+      setIsModalVisible(false);
+    });
+  };
+
+  // ===== CONFIRM handler inside bottom sheet =====
+  const handleConfirm = () => {
     const hasSizes = product.sizes && product.sizes.length > 0;
 
     if (hasSizes && !selectedSize) {
       setSizeError(true);
+      Alert.alert('Select Size', 'Please select a size before proceeding.');
       return;
     }
 
-    // Use selected size, or 'One Size' if no sizes defined
     const size = selectedSize || 'One Size';
     const color = selectedColor || product.colors[0]?.name || 'Default';
-    addItem(product, size, color);
 
-    // Show success feedback (could be a toast/snackbar)
-    navigation.goBack();
+    for (let i = 0; i < quantity; i++) {
+      addItem(product, size, color);
+    }
+
+    closeBottomSheet();
+
+    if (pendingAction === 'bag') {
+      setAddedToBag(true);
+    } else {
+      // Navigate to checkout immediately
+      navigation.navigate('Checkout');
+    }
+  };
+
+  const incrementQuantity = () => {
+    setQuantity(prev => Math.min(prev + 1, 10));
+  };
+
+  const decrementQuantity = () => {
+    setQuantity(prev => Math.max(prev - 1, 1));
   };
 
   const handleWishlistToggle = () => {
@@ -129,14 +184,14 @@ export const ProductDetailsScreen: React.FC = () => {
         <View style={styles.headerActions}>
           <TouchableOpacity
             style={styles.headerButton}
-            onPress={() => navigation.navigate('Main')}
+            onPress={() => navigation.navigate('Main', { screen: 'BagTab' } as any)}
           >
             <Icon name="shopping-bag" size={24} color={colors.textPrimary} />
           </TouchableOpacity>
         </View>
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView ref={scrollViewRef} style={styles.content} showsVerticalScrollIndicator={false}>
         {/* ===== 1. IMAGE CAROUSEL ===== */}
         <View style={styles.imageCarousel}>
           <CircularImageCarousel
@@ -154,33 +209,29 @@ export const ProductDetailsScreen: React.FC = () => {
             />
           )}
 
-          {/* Rating Badge - Bottom Right (Myntra style) */}
-          {product.ratingCount > 0 && (
-            <View style={styles.imageRatingBadge}>
-              <Text style={styles.imageRatingText}>{product.rating.toFixed(1)}</Text>
-              <Text style={styles.imageRatingStar}>★</Text>
-              <View style={styles.imageRatingDivider} />
-              <Text style={styles.imageRatingCount}>
-                {product.ratingCount >= 1000 ? `${(product.ratingCount / 1000).toFixed(1)}k` : product.ratingCount}
-              </Text>
-            </View>
-          )}
+          {/* Rating Badge - Bottom Right (Myntra style) — always visible */}
+          <View style={styles.imageRatingBadge}>
+            <Text style={styles.imageRatingText}>{product.rating.toFixed(1)}</Text>
+            <Text style={styles.imageRatingStar}>★</Text>
+            <View style={styles.imageRatingDivider} />
+            <Text style={styles.imageRatingCount}>
+              {product.ratingCount >= 1000 ? `${(product.ratingCount / 1000).toFixed(1)}k` : product.ratingCount}
+            </Text>
+          </View>
         </View>
 
         {/* Product Info Container with Share/Wishlist buttons */}
         <View style={styles.productInfo}>
-          {/* Brand, Name & Action Buttons Row */}
+          {/* Top Row: Brand + Name & Action Buttons */}
           <View style={styles.productHeaderRow}>
-            {/* Left: Brand & Name */}
+            {/* Left: Brand & Name inline */}
             <View style={styles.productHeaderLeft}>
-              <Text style={styles.brand}>{product.brand}</Text>
-              <Text style={styles.name}>{product.name}</Text>
-              {/* Rating */}
-              <View style={styles.ratingRow}>
-                <Rating rating={product.rating} count={product.ratingCount} size="medium" />
-              </View>
+              <Text style={styles.brandNameInline}>
+                <Text style={styles.brand}>{product.brand}</Text>
+                {'  '}
+                <Text style={styles.name}>{product.name}</Text>
+              </Text>
             </View>
-
             {/* Right: Share & Wishlist Buttons (Myntra style) */}
             <View style={styles.productHeaderRight}>
               <TouchableOpacity style={styles.imageActionButton}>
@@ -199,10 +250,7 @@ export const ProductDetailsScreen: React.FC = () => {
             </View>
           </View>
 
-          {/* Divider */}
-          <View style={styles.divider} />
-
-          {/* ===== 2. PRICE ===== */}
+          {/* Price & Tax - full width */}
           <View style={styles.priceRow}>
             <Price
               price={product.price}
@@ -216,82 +264,48 @@ export const ProductDetailsScreen: React.FC = () => {
           {/* Divider */}
           <View style={styles.divider} />
 
-          {/* ===== 3. SIZE / COLOR SELECTORS ===== */}
-
-          {/* Size Selection - ONLY show if product has sizes */}
+          {/* ===== 3. SIZE SELECTOR (visible on main page) ===== */}
           {product.sizes && product.sizes.length > 0 && (
-            <View style={styles.section}>
-              <View style={styles.sectionHeader}>
-                <Text style={styles.sectionTitle}>SELECT SIZE</Text>
-                <TouchableOpacity>
-                  <Text style={styles.sizeGuide}>SIZE CHART</Text>
-                </TouchableOpacity>
-              </View>
+            <>
+              <View style={styles.section}>
+                <View style={styles.sizeSectionHeader}>
+                  <Text style={styles.sectionTitle}>SELECT SIZE</Text>
+                  <TouchableOpacity>
+                    <Text style={styles.sizeGuideInline}>SIZE CHART</Text>
+                  </TouchableOpacity>
+                </View>
 
-              {sizeError && (
-                <Text style={styles.errorText}>Please select a size</Text>
-              )}
-
-              <View style={styles.sizeOptions}>
-                {product.sizes.map(size => (
-                  <TouchableOpacity
-                    key={size.label}
-                    style={[
-                      styles.sizeButton,
-                      selectedSize === size.label && styles.sizeButtonSelected,
-                      !size.available && styles.sizeButtonDisabled,
-                    ]}
-                    onPress={() => size.available && handleSizeSelect(size.label)}
-                    disabled={!size.available}
-                  >
-                    <Text
+                <View style={styles.sizeOptions}>
+                  {product.sizes.map(size => (
+                    <TouchableOpacity
+                      key={size.label}
                       style={[
-                        styles.sizeButtonText,
-                        selectedSize === size.label && styles.sizeButtonTextSelected,
-                        !size.available && styles.sizeButtonTextDisabled,
+                        styles.sizeChip,
+                        selectedSize === size.label && styles.sizeChipSelected,
+                        !size.available && styles.sizeChipDisabled,
                       ]}
+                      onPress={() => size.available && handleSizeSelect(size.label)}
+                      disabled={!size.available}
+                      activeOpacity={0.7}
                     >
-                      {size.label}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
+                      <Text
+                        style={[
+                          styles.sizeChipText,
+                          selectedSize === size.label && styles.sizeChipTextSelected,
+                          !size.available && styles.sizeChipTextDisabled,
+                        ]}
+                      >
+                        {size.label}
+                      </Text>
+                      {!size.available && <View style={styles.sizeChipStrike} />}
+                    </TouchableOpacity>
+                  ))}
+                </View>
               </View>
-            </View>
+              <View style={styles.divider} />
+            </>
           )}
 
-          {/* Color Selection - ONLY show if product has MORE than 1 color */}
-          {product.colors && product.colors.length > 1 && (
-            <View style={styles.section}>
-              <Text style={styles.sectionTitle}>SELECT COLOR</Text>
-              <View style={styles.colorOptions}>
-                {product.colors.map(color => (
-                  <TouchableOpacity
-                    key={color.name}
-                    style={[
-                      styles.colorButton,
-                      selectedColor === color.name && styles.colorButtonSelected,
-                    ]}
-                    onPress={() => color.available && setSelectedColor(color.name)}
-                    disabled={!color.available}
-                  >
-                    <View
-                      style={[
-                        styles.colorSwatch,
-                        { backgroundColor: color.hex },
-                        !color.available && styles.colorSwatchDisabled,
-                      ]}
-                    />
-                    <Text style={styles.colorName}>{color.name}</Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-          )}
-
-          {/* Divider - only show if there were sizes or colors above */}
-          {((product.sizes && product.sizes.length > 0) || (product.colors && product.colors.length > 1)) && (
-            <View style={styles.divider} />
-          )}
 
           {/* ===== 4. SELLER NAME (small, subtle) ===== */}
           {product.sellerName && (
@@ -379,13 +393,15 @@ export const ProductDetailsScreen: React.FC = () => {
           <View style={styles.section}>
             <View style={styles.reviewsHeader}>
               <Text style={styles.sectionTitle}>RATINGS & REVIEWS</Text>
-              <TouchableOpacity
-                style={styles.writeReviewButton}
-                onPress={() => setShowReviewModal(true)}
-              >
-                <Icon name="rate-review" size={16} color={colors.primary} />
-                <Text style={styles.writeReviewText}>Write Review</Text>
-              </TouchableOpacity>
+              {canReview && (
+                <TouchableOpacity
+                  style={styles.writeReviewButton}
+                  onPress={() => setShowReviewModal(true)}
+                >
+                  <Icon name="rate-review" size={16} color={colors.primary} />
+                  <Text style={styles.writeReviewText}>Write Review</Text>
+                </TouchableOpacity>
+              )}
             </View>
 
             {/* Review Stats Summary */}
@@ -421,7 +437,9 @@ export const ProductDetailsScreen: React.FC = () => {
               <View style={styles.noReviewsContainer}>
                 <Icon name="rate-review" size={48} color={colors.textTertiary} />
                 <Text style={styles.noReviewsText}>No reviews yet</Text>
-                <Text style={styles.noReviewsSubtext}>Be the first to review this product</Text>
+                {canReview && (
+                  <Text style={styles.noReviewsSubtext}>Be the first to review this product</Text>
+                )}
               </View>
             )}
 
@@ -467,39 +485,251 @@ export const ProductDetailsScreen: React.FC = () => {
             )}
           </View>
 
-          {/* Bottom spacing for scroll */}
-          <View style={{ height: spacing.xxl }} />
+          {/* Bottom spacing for scroll — enough room for sticky footer */}
+          <View style={{ height: 100 }} />
         </View>
       </ScrollView>
 
-      {/* Bottom Action Bar */}
-      <View style={styles.bottomBar}>
-        <TouchableOpacity
-          style={styles.buyNowButton}
-          onPress={() => {
-            // Add to bag and navigate to checkout
-            const hasSizes = product.sizes && product.sizes.length > 0;
-            if (hasSizes && !selectedSize) {
-              setSizeError(true);
-              return;
-            }
-            const size = selectedSize || 'One Size';
-            const color = selectedColor || product.colors[0]?.name || 'Default';
-            addItem(product, size, color);
-            navigation.navigate('Checkout');
-          }}
-          disabled={!product.inStock}
-        >
-          <Text style={styles.buyNowButtonText}>BUY NOW</Text>
-        </TouchableOpacity>
+      {/* ===== STICKY BOTTOM FOOTER: Buy Now + Add to Bag ===== */}
+      <View style={[styles.bottomBar, { paddingBottom: Math.max(insets.bottom, spacing.sm) }]}>
+        {product.inStock ? (
+          <>
+            {/* Buy Now Button (Left – outlined white) */}
+            <TouchableOpacity
+              style={styles.buyNowFooterButton}
+              onPress={() => openBottomSheet('buy')}
+              activeOpacity={0.7}
+            >
+              <Icon name="flash-on" size={20} color={colors.textPrimary} />
+              <Text style={styles.buyNowFooterText}>BUY NOW</Text>
+            </TouchableOpacity>
 
-        <Button
-          title="ADD TO BAG"
-          onPress={handleAddToBag}
-          style={styles.addToBagButton}
-          disabled={!product.inStock}
-        />
+            {/* Divider */}
+            <View style={styles.bottomBarDivider} />
+
+            {/* Add to Bag / Go to Bag Button (Right – primary red) */}
+            {addedToBag || bagItems.some(i => i.product.id === product.id) ? (
+              <TouchableOpacity
+                style={styles.addToBagFooterButton}
+                onPress={() => navigation.navigate('Main', { screen: 'BagTab' } as any)}
+                activeOpacity={0.8}
+              >
+                <Icon name="shopping-bag" size={20} color={colors.white} />
+                <Text style={styles.addToBagFooterText}>GO TO BAG</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity
+                style={styles.addToBagFooterButton}
+                onPress={() => openBottomSheet('bag')}
+                activeOpacity={0.8}
+              >
+                <Icon name="shopping-bag" size={20} color={colors.white} />
+                <Text style={styles.addToBagFooterText}>ADD TO BAG</Text>
+              </TouchableOpacity>
+            )}
+          </>
+        ) : (
+          <View style={[styles.addToBagFooterButton, styles.outOfStockButton, { flex: 1 }]}>
+            <Icon name="block" size={20} color={colors.white} />
+            <Text style={styles.addToBagFooterText}>OUT OF STOCK</Text>
+          </View>
+        )}
       </View>
+
+      {/* ===== SELECTION BOTTOM SHEET ===== */}
+      <Modal
+        visible={isModalVisible}
+        transparent
+        animationType="none"
+        statusBarTranslucent
+        onRequestClose={closeBottomSheet}
+      >
+        {/* Backdrop */}
+        <TouchableWithoutFeedback onPress={closeBottomSheet}>
+          <View style={styles.modalBackdrop} />
+        </TouchableWithoutFeedback>
+
+        {/* Sliding Sheet */}
+        <Animated.View
+          style={[
+            styles.bottomSheet,
+            {
+              transform: [{
+                translateY: slideAnim.interpolate({
+                  inputRange: [0, 1],
+                  outputRange: [600, 0],
+                }),
+              }],
+            },
+          ]}
+        >
+          {/* Sheet Handle */}
+          <View style={styles.sheetHandle} />
+
+          {/* Product Mini Summary */}
+          <View style={styles.sheetProductSummary}>
+            <Image
+              source={{ uri: product.images?.[0] }}
+              style={styles.sheetProductImage}
+            />
+            <View style={styles.sheetProductInfo}>
+              <Text style={styles.sheetProductName} numberOfLines={1}>
+                {product.brand} – {product.name}
+              </Text>
+              <View style={styles.sheetPriceRow}>
+                <Text style={styles.sheetPrice}>₹{product.price}</Text>
+                {product.originalPrice > product.price && (
+                  <>
+                    <Text style={styles.sheetOriginalPrice}>₹{product.originalPrice}</Text>
+                    <Text style={styles.sheetDiscount}>{product.discount}% OFF</Text>
+                  </>
+                )}
+              </View>
+            </View>
+            <TouchableOpacity onPress={closeBottomSheet} style={styles.sheetCloseButton}>
+              <Icon name="close" size={22} color={colors.textSecondary} />
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.sheetDivider} />
+
+          {/* Size Selection */}
+          {product.sizes && product.sizes.length > 0 && (
+            <View style={styles.sheetSection}>
+              <View style={styles.sheetSectionHeader}>
+                <Text style={[
+                  styles.sheetSectionTitle,
+                  sizeError && { color: colors.error },
+                ]}>
+                  SELECT SIZE
+                </Text>
+                <TouchableOpacity>
+                  <Text style={styles.sizeGuide}>SIZE CHART</Text>
+                </TouchableOpacity>
+              </View>
+
+              {sizeError && (
+                <View style={styles.sheetSizeErrorBanner}>
+                  <Icon name="error-outline" size={14} color={colors.error} />
+                  <Text style={styles.sheetSizeErrorText}>Please select a size</Text>
+                </View>
+              )}
+
+              <View style={styles.sizeOptions}>
+                {product.sizes.map(size => (
+                  <TouchableOpacity
+                    key={size.label}
+                    style={[
+                      styles.sizeChip,
+                      selectedSize === size.label && styles.sizeChipSelected,
+                      !size.available && styles.sizeChipDisabled,
+                      sizeError && !selectedSize && size.available && styles.sizeChipError,
+                    ]}
+                    onPress={() => size.available && handleSizeSelect(size.label)}
+                    disabled={!size.available}
+                    activeOpacity={0.7}
+                  >
+                    <Text
+                      style={[
+                        styles.sizeChipText,
+                        selectedSize === size.label && styles.sizeChipTextSelected,
+                        !size.available && styles.sizeChipTextDisabled,
+                      ]}
+                    >
+                      {size.label}
+                    </Text>
+                    {!size.available && <View style={styles.sizeChipStrike} />}
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
+
+          {/* Color Selection (in sheet) */}
+          {product.colors && product.colors.length > 1 && (
+            <View style={styles.sheetSection}>
+              <Text style={styles.sheetSectionTitle}>SELECT COLOR</Text>
+              <View style={styles.colorOptions}>
+                {product.colors.map(color => (
+                  <TouchableOpacity
+                    key={color.name}
+                    style={[
+                      styles.colorButton,
+                      selectedColor === color.name && styles.colorButtonSelected,
+                    ]}
+                    onPress={() => color.available && setSelectedColor(color.name)}
+                    disabled={!color.available}
+                  >
+                    <View
+                      style={[
+                        styles.colorSwatch,
+                        { backgroundColor: color.hex },
+                        !color.available && styles.colorSwatchDisabled,
+                      ]}
+                    />
+                    <Text style={styles.colorName}>{color.name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
+
+          <View style={styles.sheetDivider} />
+
+          {/* Quantity Stepper */}
+          <View style={styles.sheetSection}>
+            <Text style={styles.sheetSectionTitle}>QUANTITY</Text>
+            <View style={styles.quantityContainer}>
+              <TouchableOpacity
+                style={[
+                  styles.quantityButton,
+                  quantity <= 1 && styles.quantityButtonDisabled,
+                ]}
+                onPress={decrementQuantity}
+                disabled={quantity <= 1}
+                activeOpacity={0.7}
+              >
+                <Icon name="remove" size={20} color={quantity <= 1 ? colors.textDisabled : colors.textPrimary} />
+              </TouchableOpacity>
+
+              <View style={styles.quantityDisplay}>
+                <Text style={styles.quantityText}>{quantity}</Text>
+              </View>
+
+              <TouchableOpacity
+                style={[
+                  styles.quantityButton,
+                  quantity >= 10 && styles.quantityButtonDisabled,
+                ]}
+                onPress={incrementQuantity}
+                disabled={quantity >= 10}
+                activeOpacity={0.7}
+              >
+                <Icon name="add" size={20} color={quantity >= 10 ? colors.textDisabled : colors.textPrimary} />
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {/* Confirm Button */}
+          <TouchableOpacity
+            style={[
+              styles.sheetConfirmButton,
+              pendingAction === 'buy' ? styles.sheetConfirmBuyNow : styles.sheetConfirmAddToBag,
+            ]}
+            onPress={handleConfirm}
+            activeOpacity={0.85}
+          >
+            <Icon
+              name={pendingAction === 'buy' ? 'flash-on' : 'shopping-bag'}
+              size={20}
+              color={colors.white}
+            />
+            <Text style={styles.sheetConfirmText}>
+              {pendingAction === 'buy' ? 'BUY NOW' : 'ADD TO BAG'}
+            </Text>
+          </TouchableOpacity>
+        </Animated.View>
+      </Modal>
 
       {/* Review Modal */}
       <ReviewModal
@@ -704,6 +934,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
   },
 
+  brandNameInline: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+  },
+
   brand: {
     ...typography.h4,
     color: colors.textPrimary,
@@ -712,7 +947,6 @@ const styles = StyleSheet.create({
   name: {
     ...typography.body,
     color: colors.textSecondary,
-    marginTop: spacing.xs,
   },
 
   ratingRow: {
@@ -756,51 +990,136 @@ const styles = StyleSheet.create({
     color: colors.primary,
   },
 
-  errorText: {
+  sizeSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+
+  sizeGuideInline: {
+    ...typography.label,
+    color: colors.primary,
+    fontSize: 13,
+  },
+
+  // ===== SIZE ERROR BANNER =====
+  sizeErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.sm,
+    marginBottom: spacing.md,
+  },
+
+  sizeErrorText: {
     ...typography.caption,
     color: colors.error,
-    marginBottom: spacing.sm,
+    fontWeight: '600',
   },
 
   sizeOptions: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: spacing.sm,
+    gap: spacing.md,
   },
 
-  sizeButton: {
+  // ===== CIRCULAR SIZE CHIPS (Myntra-style) =====
+  sizeChip: {
     width: 50,
     height: 50,
     borderRadius: 25,
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: colors.border,
     alignItems: 'center',
     justifyContent: 'center',
+    backgroundColor: colors.white,
+    position: 'relative',
+    overflow: 'hidden',
   },
 
-  sizeButtonSelected: {
+  sizeChipSelected: {
     borderColor: colors.primary,
     borderWidth: 2,
+    backgroundColor: '#FFF0F3',
   },
 
-  sizeButtonDisabled: {
+  sizeChipDisabled: {
     backgroundColor: colors.backgroundSecondary,
     borderColor: colors.borderLight,
   },
 
-  sizeButtonText: {
+  sizeChipError: {
+    borderColor: colors.error,
+  },
+
+  sizeChipText: {
     ...typography.body,
+    fontSize: 14,
     color: colors.textPrimary,
+    fontWeight: '500',
   },
 
-  sizeButtonTextSelected: {
+  sizeChipTextSelected: {
     color: colors.primary,
-    fontWeight: '600',
+    fontWeight: '700',
   },
 
-  sizeButtonTextDisabled: {
+  sizeChipTextDisabled: {
     color: colors.textDisabled,
-    textDecorationLine: 'line-through',
+  },
+
+  // Diagonal strike-through line for unavailable sizes
+  sizeChipStrike: {
+    position: 'absolute',
+    width: 60,
+    height: 1,
+    backgroundColor: colors.textDisabled,
+    transform: [{ rotate: '-45deg' }],
+  },
+
+  // ===== QUANTITY SELECTOR =====
+  quantityContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: spacing.md,
+    gap: spacing.xs,
+  },
+
+  quantityButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.white,
+  },
+
+  quantityButtonDisabled: {
+    borderColor: colors.borderLight,
+    backgroundColor: colors.backgroundSecondary,
+  },
+
+  quantityDisplay: {
+    width: 44,
+    height: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: colors.borderLight,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.backgroundSecondary,
+  },
+
+  quantityText: {
+    ...typography.body,
+    fontSize: 16,
+    fontWeight: '700',
+    color: colors.textPrimary,
   },
 
   colorOptions: {
@@ -859,34 +1178,225 @@ const styles = StyleSheet.create({
     marginTop: spacing.sm,
   },
 
+  // ===== STICKY BOTTOM BAR =====
   bottomBar: {
     flexDirection: 'row',
-    padding: spacing.md,
+    alignItems: 'center',
     backgroundColor: colors.white,
     borderTopWidth: 1,
     borderTopColor: colors.borderLight,
-    gap: spacing.md,
+    shadowColor: colors.black,
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.06,
+    shadowRadius: 6,
+    elevation: 8,
   },
 
-  buyNowButton: {
+  buyNowFooterButton: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.border,
+    paddingVertical: spacing.lg,
+    marginHorizontal: spacing.sm,
+    marginVertical: spacing.sm,
+    backgroundColor: colors.white,
     borderRadius: borderRadius.sm,
-    paddingVertical: spacing.md,
+    borderWidth: 1.5,
+    borderColor: colors.textPrimary,
+    gap: spacing.sm,
   },
 
-  buyNowButtonText: {
+  buyNowFooterText: {
     ...typography.button,
     color: colors.textPrimary,
+    fontWeight: '700',
+    fontSize: 14,
+    letterSpacing: 0.5,
+  },
+
+  bottomBarDivider: {
+    width: 1,
+    height: 28,
+    backgroundColor: colors.borderLight,
+  },
+
+  addToBagFooterButton: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.lg,
+    marginHorizontal: spacing.sm,
+    marginVertical: spacing.sm,
+    backgroundColor: colors.primary,
+    borderRadius: borderRadius.sm,
+    gap: spacing.sm,
+  },
+
+  addToBagFooterText: {
+    ...typography.button,
+    color: colors.white,
+    fontWeight: '700',
+    fontSize: 14,
+    letterSpacing: 0.5,
+  },
+
+  outOfStockButton: {
+    backgroundColor: colors.textDisabled,
+  },
+
+  // ===== BOTTOM SHEET MODAL =====
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+  },
+
+  bottomSheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: colors.white,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    paddingTop: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
+    shadowColor: colors.black,
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.15,
+    shadowRadius: 12,
+    elevation: 20,
+  },
+
+  sheetHandle: {
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.border,
+    alignSelf: 'center',
+    marginBottom: spacing.md,
+  },
+
+  sheetProductSummary: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+  },
+
+  sheetProductImage: {
+    width: 52,
+    height: 64,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.backgroundSecondary,
+    resizeMode: 'cover',
+  },
+
+  sheetProductInfo: {
+    flex: 1,
+    marginLeft: spacing.md,
+  },
+
+  sheetProductName: {
+    ...typography.body,
+    color: colors.textSecondary,
+    fontSize: 13,
+  },
+
+  sheetPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.xs,
+  },
+
+  sheetPrice: {
+    ...typography.h4,
+    color: colors.textPrimary,
+  },
+
+  sheetOriginalPrice: {
+    ...typography.body,
+    color: colors.textTertiary,
+    textDecorationLine: 'line-through',
+    fontSize: 13,
+  },
+
+  sheetDiscount: {
+    ...typography.caption,
+    color: colors.primary,
+    fontWeight: '700',
+  },
+
+  sheetCloseButton: {
+    padding: spacing.sm,
+  },
+
+  sheetDivider: {
+    height: 1,
+    backgroundColor: colors.borderLight,
+    marginVertical: spacing.md,
+  },
+
+  sheetSection: {
+    marginBottom: spacing.lg,
+  },
+
+  sheetSectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: spacing.md,
+  },
+
+  sheetSectionTitle: {
+    ...typography.label,
+    color: colors.textPrimary,
+    fontSize: 13,
+  },
+
+  sheetSizeErrorBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    backgroundColor: colors.errorLight,
+    borderRadius: borderRadius.sm,
+    marginBottom: spacing.md,
+  },
+
+  sheetSizeErrorText: {
+    ...typography.caption,
+    color: colors.error,
     fontWeight: '600',
   },
 
-  addToBagButton: {
-    flex: 1,
+  sheetConfirmButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: spacing.lg,
+    borderRadius: borderRadius.md,
+    gap: spacing.sm,
+    marginTop: spacing.sm,
+  },
+
+  sheetConfirmAddToBag: {
+    backgroundColor: colors.primary,
+  },
+
+  sheetConfirmBuyNow: {
+    backgroundColor: '#282C3F',
+  },
+
+  sheetConfirmText: {
+    ...typography.button,
+    color: colors.white,
+    fontWeight: '700',
+    fontSize: 15,
+    letterSpacing: 0.5,
   },
 
   centered: {

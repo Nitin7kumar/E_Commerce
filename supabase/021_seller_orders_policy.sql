@@ -1,0 +1,15 @@
+-- =====================================================
+-- MIGRATION 021: Seller Access to Orders
+-- =====================================================
+-- Sellers need to see orders that contain their products
+-- so they can track sales and revenue in their dashboard.
+--
+-- NOTE: This migration is SUPERSEDED by 022 which fixes
+-- the infinite recursion. Run 022 instead — it includes
+-- the corrected version of this policy.
+--
+-- RUN THIS IN: Supabase Dashboard → SQL Editor
+-- =====================================================
+
+-- Superseded by 022_fix_order_items_recursion.sql
+-- Please run that file instead.

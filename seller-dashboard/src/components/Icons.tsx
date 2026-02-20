@@ -88,6 +88,21 @@ export const Icons = {
             <path d="M17 7l-1.41 1.41L18.17 11H8v2h10.17l-2.58 2.58L17 17l5-5zM4 5h8V3H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h8v-2H4V5z" />
         </svg>
     ),
+
+    // Returns & Reviews Icons
+    ReturnIcon: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M9 11H7.5L12 2l4.5 9H15v4h3l-1 2H7l-1-2h3v-4zm2-4.74L9.04 10H11v4h2v-4h1.96L13 6.26h-2z" opacity="0" />
+            <path d="M19 7h-4V5.61l-1.42-.77L12 3.28 10.42 4.84 9 5.61V7H5c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V9c0-1.1-.9-2-2-2zm-7-1.82L14 7h-4l2-1.82zM19 19H5V9h14v10zm-5-2l-3-3.5L7 17h10l-3-4z" opacity="0" />
+            <path d="M12 8l-6 6h4v4h4v-4h4l-6-6zm-1.17 5L12 11.83 13.17 13H13v3h-2v-3h-.17zM19 3H5c-1.1 0-2 .9-2 2v2h2V5h14v2h2V5c0-1.1-.9-2-2-2zM5 21h14c1.1 0 2-.9 2-2v-2h-2v2H5v-2H3v2c0 1.1.9 2 2 2z" opacity="0" />
+            <path d="M9 3L5 6.99h3V14h2V6.99h3L9 3zm7 14.01V10h-2v7.01h-3L15 21l4-3.99h-3z" />
+        </svg>
+    ),
+    StarIcon: () => (
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z" />
+        </svg>
+    ),
 };
 
 // Icon wrapper component for consistent styling

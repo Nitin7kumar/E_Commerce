@@ -891,6 +891,40 @@ tr:hover td {
   color: white;
 }
 
+/* Coupon Layout - Split View */
+.coupon-layout {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  gap: 24px;
+  align-items: start;
+}
+
+.coupon-form-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+  position: sticky;
+  top: 100px;
+}
+
+.coupon-table-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+@media (max-width: 1200px) {
+  .coupon-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .coupon-form-card {
+    position: static;
+  }
+}
+
 /* Responsive */
 @media (max-width: 1024px) {
   .sidebar {

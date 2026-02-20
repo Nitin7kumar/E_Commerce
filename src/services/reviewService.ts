@@ -357,6 +357,44 @@ export const reviewService = {
             return { error: message };
         }
     },
+    async hasUserPurchasedProduct(productId: string): Promise<boolean> {
+        if (!isSupabaseConfigured()) return false;
+
+        try {
+            const supabase = getSupabase();
+            const { data: { user } } = await supabase.auth.getUser();
+
+            if (!user) return false;
+
+            // 1. Get all delivered orders for the user
+            const { data: orders, error: orderError } = await supabase
+                .from('orders')
+                .select('id')
+                .eq('user_id', user.id)
+                .eq('status', 'delivered');
+
+            if (orderError || !orders || orders.length === 0) {
+                return false;
+            }
+
+            const orderIds = orders.map(o => o.id);
+
+            // 2. Check if the product is in any of these orders
+            const { count, error: itemError } = await supabase
+                .from('order_items')
+                .select('*', { count: 'exact', head: true })
+                .eq('product_id', productId)
+                .in('order_id', orderIds);
+
+            if (itemError) {
+                return false;
+            }
+
+            return (count || 0) > 0;
+        } catch (error) {
+            return false;
+        }
+    },
 };
 
 // =====================================================
@@ -413,4 +451,23 @@ export function useUserReview(productId: string) {
     }, [fetchReview]);
 
     return { review, loading, error, refetch: fetchReview };
+}
+
+export function useCanReview(productId: string) {
+    const [canReview, setCanReview] = useState(false);
+    const [loading, setLoading] = useState(true);
+
+    const checkEligibility = useCallback(async () => {
+        if (!productId) return;
+        setLoading(true);
+        const eligible = await reviewService.hasUserPurchasedProduct(productId);
+        setCanReview(eligible);
+        setLoading(false);
+    }, [productId]);
+
+    useEffect(() => {
+        checkEligibility();
+    }, [checkEligibility]);
+
+    return { canReview, loading, refetch: checkEligibility };
 }

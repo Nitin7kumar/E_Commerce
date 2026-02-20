@@ -147,13 +147,15 @@ export interface AdminUser {
   is_admin: boolean;
 }
 
-// Check if current user is an admin
+// Admin email — must match the SQL is_admin() function
+const ADMIN_EMAIL = 'nitinkumar250607@gmail.com';
+
+// Check if current user is an admin (email-based, matching SQL is_admin())
 export async function checkIsAdmin(): Promise<boolean> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return false;
 
-  // Check user_metadata for is_admin flag
-  return user.user_metadata?.is_admin === true;
+  return user.email === ADMIN_EMAIL;
 }
 
 // Get current user with admin status
@@ -164,7 +166,7 @@ export async function getCurrentUser(): Promise<AdminUser | null> {
   return {
     id: user.id,
     email: user.email || '',
-    is_admin: user.user_metadata?.is_admin === true,
+    is_admin: user.email === ADMIN_EMAIL,
   };
 }
 
@@ -177,8 +179,8 @@ export async function signIn(email: string, password: string) {
 
   if (error) throw error;
 
-  // Check if user is admin
-  const isAdmin = data.user?.user_metadata?.is_admin === true;
+  // Check if user is admin (email-based, matching SQL is_admin())
+  const isAdmin = data.user?.email === ADMIN_EMAIL;
   if (!isAdmin) {
     await supabase.auth.signOut();
     throw new Error('Access denied. Admin privileges required.');

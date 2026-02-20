@@ -9,6 +9,8 @@ import Users from './pages/Users';
 import Inventory from './pages/Inventory';
 import Categories from './pages/Categories';
 import Sellers from './pages/Sellers';
+import Coupons from './pages/Coupons';
+import Reviews from './pages/Reviews';
 
 function App() {
   return (
@@ -16,7 +18,7 @@ function App() {
       <Routes>
         {/* Public route */}
         <Route path="/login" element={<Login />} />
-        
+
         {/* Protected routes - require admin auth */}
         <Route element={<ProtectedRoute />}>
           <Route path="/" element={<Layout />}>
@@ -28,6 +30,8 @@ function App() {
             <Route path="inventory" element={<Inventory />} />
             <Route path="categories" element={<Categories />} />
             <Route path="sellers" element={<Sellers />} />
+            <Route path="coupons" element={<Coupons />} />
+            <Route path="reviews" element={<Reviews />} />
           </Route>
         </Route>
       </Routes>

@@ -109,7 +109,12 @@ export const BagScreen: React.FC = () => {
         keyExtractor={(item, index) =>
           `${item.product.id}-${item.selectedSize}-${item.selectedColor}-${index}`
         }
-        renderItem={({ item }) => <BagItemCard item={item} />}
+        renderItem={({ item }) => (
+          <BagItemCard
+            item={item}
+            onPress={() => navigation.navigate('ProductDetails', { productId: item.product.id })}
+          />
+        )}
         ListFooterComponent={() => (
           <>
             {/* Coupon Section */}

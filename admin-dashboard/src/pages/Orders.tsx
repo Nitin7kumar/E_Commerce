@@ -25,19 +25,58 @@ export default function Orders() {
   async function fetchOrders() {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      // Debug: log current user
+      const { data: { user } } = await supabase.auth.getUser();
+      console.log('[Orders] Current user:', user?.email, 'ID:', user?.id);
+
+      // Simple count to check RLS access
+      const { count, error: countErr } = await supabase
+        .from('orders')
+        .select('*', { count: 'exact', head: true });
+      console.log('[Orders] Row count:', count, 'countError:', countErr);
+
+      // Fetch orders with order_items
+      const { data: ordersData, error: ordersError } = await supabase
         .from('orders')
         .select(`
           *,
-          profile:profiles(name, email),
           order_items(*)
         `)
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
-      setOrders(data || []);
+      console.log('[Orders] Fetched:', ordersData?.length ?? 0, 'rows, error:', ordersError);
+
+      if (ordersError) throw ordersError;
+
+      if (!ordersData || ordersData.length === 0) {
+        setOrders([]);
+        return;
+      }
+
+      // Batch-fetch profiles for all unique user_ids
+      const userIds = [...new Set(ordersData.map((o) => o.user_id))];
+      const { data: profilesData } = await supabase
+        .from('profiles')
+        .select('id, name, email')
+        .in('id', userIds);
+
+      // Build a lookup map
+      const profileMap = new Map<string, { name: string; email: string }>();
+      if (profilesData) {
+        for (const p of profilesData) {
+          profileMap.set(p.id, { name: p.name, email: p.email });
+        }
+      }
+
+      // Merge profile data into each order
+      const enrichedOrders: OrderWithItems[] = ordersData.map((order) => ({
+        ...order,
+        profile: profileMap.get(order.user_id) || undefined,
+      }));
+
+      setOrders(enrichedOrders);
     } catch (error) {
-      console.error('Error fetching orders:', error);
+      console.error('[Orders] Error fetching orders:', error);
     } finally {
       setLoading(false);
     }
@@ -260,7 +299,7 @@ export default function Orders() {
             <div className="modal-header">
               <h2>Order Details - {selectedOrder.order_number}</h2>
               <button className="modal-close" onClick={() => setShowModal(false)}>
-                ×
+                &times;
               </button>
             </div>
             <div className="modal-body">

@@ -289,6 +289,43 @@ export const productService = {
       return { products: [], error: message };
     }
   },
+
+  /**
+   * Update product stock (increment or decrement).
+   */
+  async updateStock(productId: string, quantityChange: number): Promise<{ success: boolean; error?: string }> {
+    if (!isSupabaseConfigured()) {
+      return { success: false, error: 'Supabase not configured' };
+    }
+
+    try {
+      // First get current stock
+      const { data: product, error: fetchError } = await getSupabase()
+        .from('products')
+        .select('stock')
+        .eq('id', productId)
+        .single();
+
+      if (fetchError || !product) {
+        return { success: false, error: fetchError?.message || 'Product not found' };
+      }
+
+      const newStock = Math.max(0, product.stock + quantityChange);
+
+      const { error } = await getSupabase()
+        .from('products')
+        .update({ stock: newStock })
+        .eq('id', productId);
+
+      if (error) {
+        return { success: false, error: error.message };
+      }
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: (error as Error).message };
+    }
+  },
 };
 
 // =====================================================

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
     View,
     Text,
@@ -8,15 +8,18 @@ import {
     TouchableOpacity,
     Image,
     StatusBar,
+    Platform,
+    Keyboard,
+    findNodeHandle,
     Alert,
     ActivityIndicator,
-    KeyboardAvoidingView,
-    Platform,
 } from 'react-native';
+import { KeyboardAwareScrollView } from 'react-native-keyboard-aware-scroll-view';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNavigation, useRoute, RouteProp } from '@react-navigation/native';
 import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import Icon from 'react-native-vector-icons/MaterialIcons';
+import { launchImageLibrary, launchCamera, Asset } from 'react-native-image-picker';
 import { colors } from '../../theme/colors';
 import { spacing, borderRadius } from '../../theme/spacing';
 import { typography } from '../../theme/typography';
@@ -75,10 +78,70 @@ const getRatingLabel = (rating: number): string => {
     }
 };
 
+// Upload image to Supabase Storage
+const uploadReviewImage = async (
+    uri: string,
+    fileName: string,
+    type: string
+): Promise<string | null> => {
+    if (!isSupabaseConfigured()) return null;
+
+    try {
+        const response = await fetch(uri);
+        const blob = await response.blob();
+
+        const fileExt = fileName.split('.').pop() || 'jpg';
+        const filePath = `review-images/${Date.now()}_${Math.random().toString(36).substring(7)}.${fileExt}`;
+
+        const { data, error } = await getSupabase()
+            .storage
+            .from('reviews')
+            .upload(filePath, blob, {
+                contentType: type || 'image/jpeg',
+                upsert: false,
+            });
+
+        if (error) {
+            console.error('Upload error:', error);
+            // If bucket doesn't exist, try using the product-images bucket
+            const { data: data2, error: error2 } = await getSupabase()
+                .storage
+                .from('product-images')
+                .upload(filePath, blob, {
+                    contentType: type || 'image/jpeg',
+                    upsert: false,
+                });
+
+            if (error2) {
+                console.error('Fallback upload error:', error2);
+                return null;
+            }
+
+            const { data: urlData } = getSupabase()
+                .storage
+                .from('product-images')
+                .getPublicUrl(filePath);
+
+            return urlData.publicUrl;
+        }
+
+        const { data: urlData } = getSupabase()
+            .storage
+            .from('reviews')
+            .getPublicUrl(filePath);
+
+        return urlData.publicUrl;
+    } catch (err) {
+        console.error('Image upload failed:', err);
+        return null;
+    }
+};
+
 export const WriteReviewScreen: React.FC = () => {
     const navigation = useNavigation<NavigationProp>();
     const route = useRoute<WriteReviewRouteProp>();
     const insets = useSafeAreaInsets();
+    const scrollViewRef = useRef<ScrollView>(null);
 
     const { productId, orderId, productName, imageUrl, existingReview } = route.params;
 
@@ -88,31 +151,133 @@ export const WriteReviewScreen: React.FC = () => {
     const [comment, setComment] = useState(existingReview?.comment || '');
     const [images, setImages] = useState<string[]>(existingReview?.images || []);
     const [isSubmitting, setIsSubmitting] = useState(false);
-    const [imageUrlInput, setImageUrlInput] = useState('');
+    const [isUploading, setIsUploading] = useState(false);
 
     const isEditing = !!existingReview;
 
-    // Add image from URL input
-    const handleAddImage = () => {
+    // Scroll to a specific input when it's focused (so keyboard doesn't hide it)
+    const scrollToInput = (reactNode: any) => {
+        if (scrollViewRef.current && reactNode) {
+            // Small delay to wait for keyboard to appear
+            setTimeout(() => {
+                reactNode.measureLayout(
+                    findNodeHandle(scrollViewRef.current) as number,
+                    (_x: number, y: number) => {
+                        scrollViewRef.current?.scrollTo({ y: y - 100, animated: true });
+                    },
+                    () => { } // error callback
+                );
+            }, 300);
+        }
+    };
+
+    // Show photo source picker (Camera or Gallery)
+    const handleAddPhoto = () => {
         if (images.length >= 5) {
-            Alert.alert('Limit Reached', 'You can add up to 5 images per review.');
+            Alert.alert('Limit Reached', 'You can add up to 5 photos per review.');
             return;
         }
 
-        const url = imageUrlInput.trim();
-        if (!url) {
-            Alert.alert('No URL', 'Please enter an image URL.');
-            return;
-        }
+        Alert.alert(
+            'Add Photo',
+            'Choose a source',
+            [
+                {
+                    text: 'Camera',
+                    onPress: () => openCamera(),
+                },
+                {
+                    text: 'Photo Library',
+                    onPress: () => openGallery(),
+                },
+                {
+                    text: 'Cancel',
+                    style: 'cancel',
+                },
+            ],
+            { cancelable: true }
+        );
+    };
 
-        // Basic URL validation
-        if (!url.match(/^https?:\/\/.+/i)) {
-            Alert.alert('Invalid URL', 'Please enter a valid URL starting with http:// or https://');
-            return;
-        }
+    // Open camera
+    const openCamera = async () => {
+        try {
+            const result = await launchCamera({
+                mediaType: 'photo',
+                quality: 0.8,
+                maxWidth: 1200,
+                maxHeight: 1200,
+                saveToPhotos: false,
+            });
 
-        setImages([...images, url]);
-        setImageUrlInput('');
+            if (result.didCancel || !result.assets || result.assets.length === 0) {
+                return;
+            }
+
+            await processPickedImages(result.assets);
+        } catch (error) {
+            console.error('Camera error:', error);
+            Alert.alert('Error', 'Failed to open camera. Please check camera permissions.');
+        }
+    };
+
+    // Open gallery
+    const openGallery = async () => {
+        try {
+            const maxToSelect = 5 - images.length;
+            const result = await launchImageLibrary({
+                mediaType: 'photo',
+                quality: 0.8,
+                maxWidth: 1200,
+                maxHeight: 1200,
+                selectionLimit: maxToSelect,
+            });
+
+            if (result.didCancel || !result.assets || result.assets.length === 0) {
+                return;
+            }
+
+            await processPickedImages(result.assets);
+        } catch (error) {
+            console.error('Gallery error:', error);
+            Alert.alert('Error', 'Failed to open photo library. Please check permissions.');
+        }
+    };
+
+    // Process and upload picked images
+    const processPickedImages = async (assets: Asset[]) => {
+        setIsUploading(true);
+
+        try {
+            const newImageUrls: string[] = [];
+
+            for (const asset of assets) {
+                if (!asset.uri) continue;
+
+                // Try to upload to Supabase Storage
+                const uploadedUrl = await uploadReviewImage(
+                    asset.uri,
+                    asset.fileName || `review_${Date.now()}.jpg`,
+                    asset.type || 'image/jpeg'
+                );
+
+                if (uploadedUrl) {
+                    newImageUrls.push(uploadedUrl);
+                } else {
+                    // If upload fails, use the local URI as a fallback
+                    newImageUrls.push(asset.uri);
+                }
+            }
+
+            if (newImageUrls.length > 0) {
+                setImages(prev => [...prev, ...newImageUrls].slice(0, 5));
+            }
+        } catch (error) {
+            console.error('Image processing error:', error);
+            Alert.alert('Upload Error', 'Some images could not be uploaded. Please try again.');
+        } finally {
+            setIsUploading(false);
+        }
     };
 
     // Remove image
@@ -132,7 +297,6 @@ export const WriteReviewScreen: React.FC = () => {
         setIsSubmitting(true);
 
         try {
-            // Use the reviewService to create/update the review
             const result = await reviewService.createReview({
                 product_id: productId,
                 order_id: orderId,
@@ -156,11 +320,12 @@ export const WriteReviewScreen: React.FC = () => {
                     ]
                 );
             } else {
-                Alert.alert('Error', result.error || 'Failed to submit review. Please try again.');
+                Alert.alert('Submission Error', result.error || 'Failed to submit review. Please try again.');
             }
         } catch (error) {
             console.error('Submit review error:', error);
-            Alert.alert('Error', 'Something went wrong. Please try again.');
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
+            Alert.alert('Submission Error', errorMessage);
         } finally {
             setIsSubmitting(false);
         }
@@ -185,140 +350,138 @@ export const WriteReviewScreen: React.FC = () => {
                 <View style={styles.backButton} />
             </View>
 
-            <KeyboardAvoidingView
-                style={styles.flex}
-                behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            <KeyboardAwareScrollView
+                style={styles.content}
+                contentContainerStyle={styles.contentContainer}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+                enableOnAndroid={true}
+                enableAutomaticScroll={true}
+                extraScrollHeight={Platform.OS === 'ios' ? 20 : 100}
+                extraHeight={120}
             >
-                <ScrollView
-                    style={styles.content}
-                    showsVerticalScrollIndicator={false}
-                    keyboardShouldPersistTaps="handled"
-                >
-                    {/* Product Info Header */}
-                    <View style={styles.productSection}>
-                        <Image
-                            source={{ uri: imageUrl }}
-                            style={styles.productImage}
-                        />
-                        <View style={styles.productInfo}>
-                            <Text style={styles.productName} numberOfLines={2}>
-                                {productName}
-                            </Text>
-                            <Text style={styles.reviewingText}>
-                                {isEditing ? 'Editing your review' : 'Share your experience'}
-                            </Text>
-                        </View>
-                    </View>
-
-                    {/* Star Rating Section */}
-                    <View style={styles.ratingSection}>
-                        <Text style={styles.sectionTitle}>Your Rating</Text>
-                        <StarRating rating={rating} onRatingChange={setRating} />
-                        <Text style={[
-                            styles.ratingLabel,
-                            rating > 0 && { color: colors.star }
-                        ]}>
-                            {getRatingLabel(rating)}
+                {/* Product Info Header */}
+                <View style={styles.productSection}>
+                    <Image
+                        source={{ uri: imageUrl }}
+                        style={styles.productImage}
+                    />
+                    <View style={styles.productInfo}>
+                        <Text style={styles.productName} numberOfLines={2}>
+                            {productName}
+                        </Text>
+                        <Text style={styles.reviewingText}>
+                            {isEditing ? 'Editing your review' : 'Share your experience'}
                         </Text>
                     </View>
+                </View>
 
-                    {/* Review Title */}
-                    <View style={styles.inputSection}>
-                        <Text style={styles.inputLabel}>
-                            Review Title <Text style={styles.optional}>(Optional)</Text>
-                        </Text>
-                        <TextInput
-                            style={styles.titleInput}
-                            value={title}
-                            onChangeText={setTitle}
-                            placeholder="Summarize your experience"
-                            placeholderTextColor={colors.textDisabled}
-                            maxLength={100}
-                        />
-                        <Text style={styles.charCount}>{title.length}/100</Text>
-                    </View>
+                {/* Star Rating Section */}
+                <View style={styles.ratingSection}>
+                    <Text style={styles.sectionTitle}>Your Rating</Text>
+                    <StarRating rating={rating} onRatingChange={setRating} />
+                    <Text style={[
+                        styles.ratingLabel,
+                        rating > 0 && { color: colors.star }
+                    ]}>
+                        {getRatingLabel(rating)}
+                    </Text>
+                </View>
 
-                    {/* Review Comment */}
-                    <View style={styles.inputSection}>
-                        <Text style={styles.inputLabel}>
-                            Your Review <Text style={styles.optional}>(Optional)</Text>
-                        </Text>
-                        <TextInput
-                            style={styles.commentInput}
-                            value={comment}
-                            onChangeText={setComment}
-                            placeholder="Tell others what you liked or disliked about this product..."
-                            placeholderTextColor={colors.textDisabled}
-                            multiline
-                            numberOfLines={5}
-                            textAlignVertical="top"
-                            maxLength={1000}
-                        />
-                        <Text style={styles.charCount}>{comment.length}/1000</Text>
-                    </View>
+                {/* Add Photos Section - NOW ON TOP */}
+                <View style={styles.inputSection}>
+                    <Text style={styles.inputLabel}>
+                        Add Photos <Text style={styles.optional}>(Optional)</Text>
+                    </Text>
+                    <Text style={styles.photoHint}>
+                        Add up to 5 photos to help other shoppers
+                    </Text>
 
-                    {/* Image Upload Section */}
-                    <View style={styles.inputSection}>
-                        <Text style={styles.inputLabel}>
-                            Add Photos <Text style={styles.optional}>(Optional)</Text>
-                        </Text>
-                        <Text style={styles.photoHint}>
-                            Add up to 5 image URLs to help other shoppers
-                        </Text>
-
-                        {/* Image URL Input */}
-                        <View style={styles.imageUrlInputContainer}>
-                            <TextInput
-                                style={styles.imageUrlInput}
-                                value={imageUrlInput}
-                                onChangeText={setImageUrlInput}
-                                placeholder="Paste image URL here..."
-                                placeholderTextColor={colors.textDisabled}
-                                autoCapitalize="none"
-                                keyboardType="url"
-                            />
-                            <TouchableOpacity
-                                style={[
-                                    styles.addUrlButton,
-                                    (!imageUrlInput.trim() || images.length >= 5) && styles.addUrlButtonDisabled
-                                ]}
-                                onPress={handleAddImage}
-                                disabled={!imageUrlInput.trim() || images.length >= 5}
-                            >
-                                <Icon name="add" size={24} color={colors.white} />
-                            </TouchableOpacity>
-                        </View>
-
-                        {/* Image Previews */}
-                        {images.length > 0 && (
-                            <View style={styles.imagesContainer}>
-                                {images.map((uri, index) => (
-                                    <View key={index} style={styles.imagePreviewContainer}>
-                                        <Image source={{ uri }} style={styles.imagePreview} />
-                                        <TouchableOpacity
-                                            style={styles.removeImageButton}
-                                            onPress={() => handleRemoveImage(index)}
-                                        >
-                                            <Icon name="close" size={16} color={colors.white} />
-                                        </TouchableOpacity>
-                                    </View>
-                                ))}
+                    {/* Photo Grid */}
+                    <View style={styles.photoGrid}>
+                        {/* Existing image previews */}
+                        {images.map((uri, index) => (
+                            <View key={index} style={styles.photoTile}>
+                                <Image source={{ uri }} style={styles.photoImage} />
+                                <TouchableOpacity
+                                    style={styles.removePhotoButton}
+                                    onPress={() => handleRemoveImage(index)}
+                                >
+                                    <Icon name="close" size={14} color={colors.white} />
+                                </TouchableOpacity>
                             </View>
+                        ))}
+
+                        {/* Add Photo Button */}
+                        {images.length < 5 && (
+                            <TouchableOpacity
+                                style={styles.addPhotoTile}
+                                onPress={handleAddPhoto}
+                                disabled={isUploading}
+                                activeOpacity={0.7}
+                            >
+                                {isUploading ? (
+                                    <ActivityIndicator size="small" color={colors.primary} />
+                                ) : (
+                                    <>
+                                        <Icon name="add-a-photo" size={28} color={colors.primary} />
+                                        <Text style={styles.addPhotoText}>Add Photo</Text>
+                                    </>
+                                )}
+                            </TouchableOpacity>
                         )}
                     </View>
 
-                    <View style={styles.bottomSpacer} />
-                </ScrollView>
+                    {images.length > 0 && (
+                        <Text style={styles.photoCount}>
+                            {images.length}/5 photos added
+                        </Text>
+                    )}
+                </View>
 
+                {/* Review Title */}
+                <View style={styles.inputSection}>
+                    <Text style={styles.inputLabel}>
+                        Review Title <Text style={styles.optional}>(Optional)</Text>
+                    </Text>
+                    <TextInput
+                        style={styles.titleInput}
+                        value={title}
+                        onChangeText={setTitle}
+                        placeholder="Summarize your experience"
+                        placeholderTextColor={colors.textDisabled}
+                        maxLength={100}
+                    />
+                    <Text style={styles.charCount}>{title.length}/100</Text>
+                </View>
+
+                {/* Review Comment */}
+                <View style={styles.inputSection}>
+                    <Text style={styles.inputLabel}>
+                        Your Review <Text style={styles.optional}>(Optional)</Text>
+                    </Text>
+                    <TextInput
+                        style={styles.commentInput}
+                        value={comment}
+                        onChangeText={setComment}
+                        placeholder="Tell others what you liked or disliked about this product..."
+                        placeholderTextColor={colors.textDisabled}
+                        multiline
+                        numberOfLines={5}
+                        textAlignVertical="top"
+                        maxLength={1000}
+                    />
+                    <Text style={styles.charCount}>{comment.length}/1000</Text>
+                </View>
                 {/* Submit Button */}
-                <View style={[styles.submitContainer, { paddingBottom: insets.bottom + spacing.md }]}>
+                <View style={[styles.submitContainer, { paddingBottom: Math.max(insets.bottom, spacing.md) }]}>
                     <TouchableOpacity
                         style={[
                             styles.submitButton,
-                            (rating === 0 || isSubmitting) && styles.submitButtonDisabled,
+                            (rating === 0 || isSubmitting || isUploading) && styles.submitButtonDisabled,
                         ]}
                         onPress={handleSubmit}
-                        disabled={rating === 0 || isSubmitting}
+                        disabled={rating === 0 || isSubmitting || isUploading}
                     >
                         {isSubmitting ? (
                             <ActivityIndicator size="small" color={colors.white} />
@@ -329,7 +492,7 @@ export const WriteReviewScreen: React.FC = () => {
                         )}
                     </TouchableOpacity>
                 </View>
-            </KeyboardAvoidingView>
+            </KeyboardAwareScrollView>
         </View>
     );
 };
@@ -338,6 +501,11 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: colors.white,
+    },
+
+    contentContainer: {
+        flexGrow: 1,
+        paddingBottom: spacing.huge,
     },
 
     flex: {
@@ -491,80 +659,70 @@ const styles = StyleSheet.create({
         marginBottom: spacing.md,
     },
 
-    imageUrlInputContainer: {
-        flexDirection: 'row',
-        gap: spacing.sm,
-        marginBottom: spacing.md,
-    },
-
-    imageUrlInput: {
-        flex: 1,
-        ...typography.body,
-        backgroundColor: colors.backgroundSecondary,
-        borderRadius: borderRadius.md,
-        paddingHorizontal: spacing.md,
-        paddingVertical: spacing.sm,
-        color: colors.textPrimary,
-        borderWidth: 1,
-        borderColor: colors.borderLight,
-    },
-
-    addUrlButton: {
-        width: 48,
-        height: 48,
-        borderRadius: borderRadius.md,
-        backgroundColor: colors.primary,
-        alignItems: 'center',
-        justifyContent: 'center',
-    },
-
-    addUrlButtonDisabled: {
-        backgroundColor: colors.textDisabled,
-    },
-
-    imagesContainer: {
+    photoGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: spacing.sm,
+        gap: 10,
     },
 
-    imagePreviewContainer: {
+    photoTile: {
+        width: 90,
+        height: 90,
+        borderRadius: borderRadius.md,
+        overflow: 'hidden',
         position: 'relative',
     },
 
-    imagePreview: {
-        width: 80,
-        height: 80,
-        borderRadius: borderRadius.sm,
+    photoImage: {
+        width: '100%',
+        height: '100%',
+        borderRadius: borderRadius.md,
         backgroundColor: colors.skeleton,
     },
 
-    removeImageButton: {
+    removePhotoButton: {
         position: 'absolute',
-        top: -6,
-        right: -6,
-        width: 24,
-        height: 24,
-        borderRadius: 12,
-        backgroundColor: colors.error,
+        top: 4,
+        right: 4,
+        width: 22,
+        height: 22,
+        borderRadius: 11,
+        backgroundColor: 'rgba(0,0,0,0.6)',
         alignItems: 'center',
         justifyContent: 'center',
-        elevation: 2,
-        shadowColor: colors.black,
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.2,
-        shadowRadius: 2,
+    },
+
+    addPhotoTile: {
+        width: 90,
+        height: 90,
+        borderRadius: borderRadius.md,
+        borderWidth: 2,
+        borderColor: colors.primary,
+        borderStyle: 'dashed',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#F3E8FF',
+    },
+
+    addPhotoText: {
+        ...typography.caption,
+        color: colors.primary,
+        fontWeight: '600',
+        marginTop: 4,
+        fontSize: 11,
+    },
+
+    photoCount: {
+        ...typography.caption,
+        color: colors.textTertiary,
+        marginTop: spacing.sm,
     },
 
     bottomSpacer: {
-        height: 120,
+        height: spacing.xs,
     },
 
     submitContainer: {
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
         backgroundColor: colors.white,
         paddingHorizontal: spacing.lg,
         paddingTop: spacing.md,
