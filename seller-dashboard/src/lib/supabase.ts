@@ -1,8 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
 
-// Same Supabase credentials as admin dashboard
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://xskeecvleyzwlgpxfrsb.supabase.co';
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhza2VlY3ZsZXl6d2xncHhmcnNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwMjA4MTEsImV4cCI6MjA4NTU5NjgxMX0.vnd2tFx5hvMG2iMZpYqMUV3YLMSnTPpCG5f-w5pxuno';
+// Supabase credentials loaded from .env file
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error(
+    'Missing Supabase environment variables.\n' +
+    'Please create a .env file in the seller-dashboard/ root with:\n' +
+    '  VITE_SUPABASE_URL=your_url_here\n' +
+    '  VITE_SUPABASE_ANON_KEY=your_key_here'
+  );
+}
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 

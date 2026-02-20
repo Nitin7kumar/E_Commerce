@@ -1,12 +1,11 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Config from 'react-native-config';
 
-// Supabase project credentials
+// Supabase project credentials loaded from .env file
 // Get these from your Supabase Dashboard > Settings > API
-const SUPABASE_URL: string = 'https://xskeecvleyzwlgpxfrsb.supabase.co';
-// IMPORTANT: The anon key should be a JWT token starting with 'eyJ...'
-// Get your actual anon key from Supabase Dashboard > Settings > API > Project API keys > anon public
-const SUPABASE_ANON_KEY: string = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhza2VlY3ZsZXl6d2xncHhmcnNiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzAwMjA4MTEsImV4cCI6MjA4NTU5NjgxMX0.vnd2tFx5hvMG2iMZpYqMUV3YLMSnTPpCG5f-w5pxuno';
+const SUPABASE_URL: string = Config.SUPABASE_URL || '';
+const SUPABASE_ANON_KEY: string = Config.SUPABASE_ANON_KEY || '';
 
 // Helper to check if Supabase is configured with valid credentials
 export const isSupabaseConfigured = (): boolean => {
